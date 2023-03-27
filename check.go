@@ -11,6 +11,8 @@ import (
 	"fmt"
 	"hash"
 	"math/big"
+
+	"github.com/buger/jsonparser"
 )
 
 // ErrSigMiss means the signature check failed.
@@ -237,9 +239,25 @@ func (c *Claims) scan(token []byte) (bodyLen int, sig []byte, alg string, err er
 		Alg  string   `json:"alg"`
 		Crit []string `json:"crit"`
 	}
-	if err := json.Unmarshal([]byte(c.RawHeader), &header); err != nil {
+
+	header.Kid, err = jsonparser.GetString([]byte(c.RawHeader), "kid")
+	if err != nil {
 		return 0, nil, "", fmt.Errorf("jwt: malformed JOSE header: %w", err)
 	}
+
+	header.Alg, err = jsonparser.GetString([]byte(c.RawHeader), "alg")
+	if err != nil {
+		return 0, nil, "", fmt.Errorf("jwt: malformed JOSE header: %w", err)
+	}
+
+	jsonparser.ArrayEach([]byte(c.RawHeader), func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
+		if dataType == jsonparser.String {
+			header.Crit = append(header.Crit, string(value))
+		}
+	}, "crit")
+	//if err := json.Unmarshal([]byte(c.RawHeader), &header); err != nil {
+	//	return 0, nil, "", fmt.Errorf("jwt: malformed JOSE header: %w", err)
+	//}
 
 	if len(c.Raw) == 0 {
 		return 0, nil, "", errNoPayload
