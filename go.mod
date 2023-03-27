@@ -1,5 +1,5 @@
-module github.com/pascaldekloe/jwt
+module github.com/RHRivasG/tinyjwt
 
 go 1.18
 
-require github.com/buger/jsonparser v1.1.1 // indirect
+require github.com/buger/jsonparser v1.1.1
