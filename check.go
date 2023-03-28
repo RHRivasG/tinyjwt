@@ -240,24 +240,23 @@ func (c *Claims) scan(token []byte) (bodyLen int, sig []byte, alg string, err er
 		Crit []string `json:"crit"`
 	}
 
-	header.Kid, err = jsonparser.GetString([]byte(c.RawHeader), "kid")
-	if err != nil {
+	kid, valueType, _, err := jsonparser.Get([]byte(c.RawHeader), "kid")
+	if err != nil && valueType != jsonparser.NotExist {
 		return 0, nil, "", fmt.Errorf("jwt: malformed JOSE header: %w", err)
 	}
+	header.Kid = string(kid)
 
-	header.Alg, err = jsonparser.GetString([]byte(c.RawHeader), "alg")
-	if err != nil {
+	algJwt, valueType, _, err := jsonparser.Get([]byte(c.RawHeader), "alg")
+	if err != nil && valueType != jsonparser.NotExist {
 		return 0, nil, "", fmt.Errorf("jwt: malformed JOSE header: %w", err)
 	}
+	header.Alg = string(algJwt)
 
 	jsonparser.ArrayEach([]byte(c.RawHeader), func(value []byte, dataType jsonparser.ValueType, offset int, err error) {
 		if dataType == jsonparser.String {
 			header.Crit = append(header.Crit, string(value))
 		}
 	}, "crit")
-	//if err := json.Unmarshal([]byte(c.RawHeader), &header); err != nil {
-	//	return 0, nil, "", fmt.Errorf("jwt: malformed JOSE header: %w", err)
-	//}
 
 	if len(c.Raw) == 0 {
 		return 0, nil, "", errNoPayload
@@ -279,61 +278,33 @@ func (c *Claims) scan(token []byte) (bodyLen int, sig []byte, alg string, err er
 }
 
 func (c *Claims) applyPayload() error {
-	err := json.Unmarshal([]byte(c.Raw), &c.Set)
-	if err != nil {
-		return fmt.Errorf("jwt: malformed payload: %w", err)
-	}
+	err := jsonparser.ObjectEach([]byte(c.Raw), func(key, value []byte, dataType jsonparser.ValueType, offset int) error {
+		skey := string(key)
+		svalue := string(value)
+		var err error
 
-	// move from Set to Registered on type match
-	m := c.Set
-	if s, ok := m[issuer].(string); ok {
-		delete(m, issuer)
-		c.Issuer = s
-	}
-	if s, ok := m[subject].(string); ok {
-		delete(m, subject)
-		c.Subject = s
-	}
+		if skey == issuer {
+			c.Issuer = svalue
+		} else if skey == subject {
+			c.Subject = svalue
+		} else if skey == audience && dataType == jsonparser.String {
+			c.Audiences = []string{svalue}
+		} else if skey == expires {
+			var expiresFloat float64
+			expiresFloat, err = jsonparser.GetFloat(value)
 
-	// “In the general case, the "aud" value is an array of case-sensitive
-	// strings, each containing a StringOrURI value.  In the special case
-	// when the JWT has one audience, the "aud" value MAY be a single
-	// case-sensitive string containing a StringOrURI value.”
-	switch a := m[audience].(type) {
-	case []interface{}:
-		allStrings := true
-		for _, o := range a {
-			if s, ok := o.(string); ok {
-				c.Audiences = append(c.Audiences, s)
-			} else {
-				allStrings = false
-			}
-		}
-		if allStrings {
-			delete(m, audience)
+			c.Expires = (*NumericTime)(&expiresFloat)
+		} else if skey == issued {
+			var issuedAt float64
+			issuedAt, err = jsonparser.GetFloat(value)
+
+			c.Issued = (*NumericTime)(&issuedAt)
+		} else if skey == id {
+			c.ID = svalue
 		}
 
-	case string:
-		delete(m, audience)
-		c.Audiences = []string{a}
-	}
+		return err
+	})
 
-	if f, ok := m[expires].(float64); ok {
-		delete(m, expires)
-		c.Expires = (*NumericTime)(&f)
-	}
-	if f, ok := m[notBefore].(float64); ok {
-		delete(m, notBefore)
-		c.NotBefore = (*NumericTime)(&f)
-	}
-	if f, ok := m[issued].(float64); ok {
-		delete(m, issued)
-		c.Issued = (*NumericTime)(&f)
-	}
-	if s, ok := m[id].(string); ok {
-		delete(m, id)
-		c.ID = s
-	}
-
-	return nil
+	return err
 }
